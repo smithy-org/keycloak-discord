@@ -178,6 +178,12 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
 
         UserModel user = findOrCreateFederatedUser(realm, identityProviderAlias, discordUserId, identity.getUsername());
 
+        // Outside the normal request pipeline (AuthenticationProcessor,
+        // TokenEndpoint), nothing else sets this -- but TokenManager's
+        // protocol-mapper chain reads it (e.g. resolving client attributes
+        // for mappers like discord-id) and NPEs on a null client.
+        session.getContext().setClient(client);
+
         EventBuilder event = new EventBuilder(realm, session, session.getContext().getConnection());
         event.event(EventType.LOGIN);
         event.client(client);
