@@ -63,8 +63,8 @@ Content-Type: application/json
 `identityProviderAlias` and `clientId` fall back to this provider's own
 configured defaults if omitted (`identityProviderAlias` /
 `clientId` config, e.g. via
-`SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_IDENTITY_PROVIDER_ALIAS` /
-`SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_CLIENT_ID` environment
+`KC_SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_IDENTITY_PROVIDER_ALIAS` /
+`KC_SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_CLIENT_ID` environment
 variables, or the equivalent `spi-realm-restapi-extension-discord-exchange-*`
 Keycloak config options) -- set one or both if every caller in your
 deployment always targets the same identity provider/client, so callers only
