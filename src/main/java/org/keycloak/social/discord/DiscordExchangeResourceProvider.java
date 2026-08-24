@@ -228,18 +228,24 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
     private UserModel findOrCreateFederatedUser(RealmModel realm, String identityProviderAlias, String discordUserId, String discordUsername) {
         FederatedIdentityModel link = new FederatedIdentityModel(identityProviderAlias, discordUserId, discordUsername);
         UserModel user = session.users().getUserByFederatedIdentity(realm, link);
-        if (user != null) {
-            return user;
+        if (user == null) {
+            // Deterministic, collision-free username derived from the
+            // Discord snowflake -- mirrors what a first browser-broker
+            // login would have created, so a user who later does complete
+            // a standard broker login (non-embedded deployment of this
+            // same realm) resolves to the same account.
+            String username = "discord_" + discordUserId;
+            user = session.users().addUser(realm, username);
+            user.setEnabled(true);
+            session.users().addFederatedIdentity(realm, user, link);
         }
-        // Deterministic, collision-free username derived from the Discord
-        // snowflake -- mirrors what a first browser-broker login would
-        // have created, so a user who later does complete a standard
-        // broker login (non-embedded deployment of this same realm)
-        // resolves to the same account.
-        String username = "discord_" + discordUserId;
-        user = session.users().addUser(realm, username);
-        user.setEnabled(true);
-        session.users().addFederatedIdentity(realm, user, link);
+        // Keycloak has no built-in mapper that reads a federated identity's
+        // external id directly into a token claim -- stored as a plain user
+        // attribute instead so deployments can expose it with the standard,
+        // built-in oidc-usermodel-attribute-mapper (no custom mapper code
+        // needed). Set on every exchange, not just creation, so it stays
+        // correct even for a user whose federated link predates this field.
+        user.setSingleAttribute("discord_id", discordUserId);
         return user;
     }
 

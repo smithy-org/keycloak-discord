@@ -91,6 +91,13 @@ Discord's own Embedded App SDK expects it for a following
 any Discord SDK commands that require the session to be marked
 authenticated.
 
+The user's Discord snowflake ID is also stored as a plain user attribute,
+`discord_id`, on every exchange (not just first creation). Keycloak has no
+built-in mapper that reads a federated identity's external id directly into
+a token claim, but a user attribute can be exposed as one with the standard,
+built-in `oidc-usermodel-attribute-mapper` protocol mapper -- no custom
+mapper code needed on your end.
+
 
 ## Licence
 
