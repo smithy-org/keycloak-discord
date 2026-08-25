@@ -40,6 +40,7 @@ import org.keycloak.models.UserSessionModel;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.TokenManager;
 import org.keycloak.representations.AccessTokenResponse;
+import org.keycloak.services.Urls;
 import org.keycloak.services.resource.RealmResourceProvider;
 import org.keycloak.services.util.DefaultClientSessionContext;
 
@@ -213,6 +214,14 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
         AuthenticatedClientSessionModel clientSession = session.sessions().createClientSession(realm, client, userSession);
         clientSession.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
         clientSession.setNote(org.keycloak.OAuth2Constants.SCOPE, "openid");
+        // TokenManager.initToken() reads the token's "iss" claim from this
+        // note, not from the request URI directly -- normally set by
+        // AuthenticationProcessor, which this endpoint bypasses. Without it
+        // the minted token's issuer is null and Jackson omits "iss" from
+        // the JSON entirely (confirmed live: relay rejected the token with
+        // "missing field `iss`").
+        clientSession.setNote(OIDCLoginProtocol.ISSUER,
+                Urls.realmIssuer(session.getContext().getUri().getBaseUri(), realm.getName()));
 
         ClientSessionContext clientSessionCtx = DefaultClientSessionContext.fromClientSessionScopeParameter(clientSession, session);
 
