@@ -264,15 +264,11 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
         FederatedIdentityModel link = new FederatedIdentityModel(identityProviderAlias, discordUserId, discordUsername);
         UserModel user = session.users().getUserByFederatedIdentity(realm, link);
         if (user == null) {
-            // Deterministic, collision-free username derived from the
-            // Discord snowflake -- mirrors what a first browser-broker
-            // login would have created, so a user who later does complete
-            // a standard broker login (non-embedded deployment of this
-            // same realm) resolves to the same account.
-            String username = "discord_" + discordUserId;
-            user = session.users().addUser(realm, username);
+            user = session.users().addUser(realm, preferredUsername(realm, discordUserId, discordUsername));
             user.setEnabled(true);
             session.users().addFederatedIdentity(realm, user, link);
+        } else {
+            selfHealPlaceholderUsername(realm, user, discordUserId, discordUsername);
         }
         // Keycloak has no built-in mapper that reads a federated identity's
         // external id directly into a token claim -- stored as a plain user
@@ -282,6 +278,47 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
         // correct even for a user whose federated link predates this field.
         user.setSingleAttribute("discord_id", discordUserId);
         return user;
+    }
+
+    /**
+     * The Discord handle is the natural Keycloak username: globally unique
+     * on Discord's side, and exactly what downstream consumers of the
+     * {@code preferred_username} claim want to display. The old
+     * snowflake-derived {@code discord_<id>} name survives only as the
+     * fallback for a blank handle or a username collision (a different
+     * account -- e.g. one created by the browser broker before this
+     * federated link existed -- already holding the name).
+     */
+    private String preferredUsername(RealmModel realm, String discordUserId, String discordUsername) {
+        if (isBlank(discordUsername)) {
+            return "discord_" + discordUserId;
+        }
+        if (session.users().getUserByUsername(realm, discordUsername) != null) {
+            log.warnf("discord-exchange: username '%s' already taken, creating user under snowflake name instead", discordUsername);
+            return "discord_" + discordUserId;
+        }
+        return discordUsername;
+    }
+
+    /**
+     * Users created by earlier versions of this endpoint were named
+     * {@code discord_<snowflake>} even though the real handle was already
+     * known -- rename them to the handle on their next exchange. Safe for
+     * every downstream consumer: tokens identify the account by {@code sub}
+     * (the Keycloak user id), which a username rename never changes.
+     */
+    private void selfHealPlaceholderUsername(RealmModel realm, UserModel user, String discordUserId, String discordUsername) {
+        if (isBlank(discordUsername)) {
+            return;
+        }
+        if (!("discord_" + discordUserId).equals(user.getUsername())) {
+            return;
+        }
+        if (session.users().getUserByUsername(realm, discordUsername) != null) {
+            return;
+        }
+        log.infof("discord-exchange: renaming placeholder user '%s' to Discord handle '%s'", user.getUsername(), discordUsername);
+        user.setUsername(discordUsername);
     }
 
     private boolean checkRateLimit(String clientIp) {
