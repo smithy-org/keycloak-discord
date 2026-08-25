@@ -15,6 +15,8 @@
 package org.keycloak.social.discord;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -171,6 +173,24 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
             return errorResponse(Response.Status.BAD_GATEWAY, "server_error", "Could not resolve the Discord identity.");
         }
 
+        // getFederatedIdentity() above only extracts the access_token to
+        // resolve the profile -- it does NOT populate
+        // BrokeredIdentityContext.getToken() (that only happens in
+        // AbstractOAuth2IdentityProvider's browser-broker callback handler,
+        // which this endpoint never calls). Parse Discord's raw token
+        // response ourselves so the client gets a real access_token for its
+        // own discordSdk.commands.authenticate() call.
+        String discordAccessToken;
+        try {
+            discordAccessToken = new ObjectMapper().readTree(tokenResponse).path("access_token").asText(null);
+        } catch (Exception e) {
+            discordAccessToken = null;
+        }
+        if (isBlank(discordAccessToken)) {
+            log.warn("discord-exchange: Discord token response had no access_token field");
+            return errorResponse(Response.Status.BAD_GATEWAY, "server_error", "Discord did not return an access token.");
+        }
+
         String discordUserId = identity.getId();
         if (isBlank(discordUserId)) {
             return errorResponse(Response.Status.BAD_GATEWAY, "server_error", "Discord did not return a user id.");
@@ -209,7 +229,7 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
         body.put("access_token", tokens.getToken());
         body.put("refresh_token", tokens.getRefreshToken());
         body.put("expires_in", tokens.getExpiresIn());
-        body.put("discord_access_token", identity.getToken());
+        body.put("discord_access_token", discordAccessToken);
         return Response.ok(body, MediaType.APPLICATION_JSON_TYPE).build();
     }
 
