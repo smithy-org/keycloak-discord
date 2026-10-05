@@ -3,10 +3,28 @@
 Keycloak Social Login extension for Discord.
 
 
+## Compatibility
+
+This fork is built from source and tracks the Keycloak release it is deployed on. It has no
+published releases: the upstream project's jars do not contain the token-exchange endpoint below.
+
+| Fork | Built against | JDK | Status |
+|---|---|---|---|
+| `master` (from the "Build against Keycloak 26.7.5" change) | Keycloak 26.7.5 | 21 | Current. Uses `org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()` and the 10-argument `createUserSession`, so it needs **Keycloak 26.4 or newer**. |
+| Up to `c25d602` | Keycloak 26.0.8 | 17 | Compiles unchanged against 26.7.5, but uses APIs Keycloak has deprecated (one for removal). Needed only for Keycloak older than 26.4. |
+
+The provider compiles against Keycloak's SPI, so build it against the exact Keycloak version that
+runs it: `mvn package -Dversion.keycloak=<version>` overrides the pom. A Keycloak minor release can
+change SPI signatures, so rebuild and smoke-test the exchange endpoint (below) on every Keycloak
+upgrade rather than assuming the previous jar still works.
+
+Keycloak 26.5 made every user session persistent. The exchange endpoint creates its session as
+`PERSISTENT` explicitly, so the refresh token it returns is refreshable after a restart.
+
 ## Install
 
-Download `keycloak-discord-<version>.jar` from [Releases page](https://github.com/wadahiro/keycloak-discord/releases).
-Then deploy it into `$KEYCLOAK_HOME/providers` directory.
+Build the jar (see Source Build) and copy it into the `$KEYCLOAK_HOME/providers` directory, then run
+`kc.sh build` (or build the image) before `start --optimized`.
 
 ## Setup
 
@@ -26,7 +44,8 @@ Note: You don't need to setup the theme in `master` realm from v0.3.0.
 
 ## Source Build
 
-Clone this repository and run `mvn package`.
+Clone this repository and run `mvn package` (JDK 21), adding `-Dversion.keycloak=<version>` to
+target a Keycloak release other than the one in `pom.xml`.
 You can see `keycloak-discord-<version>.jar` under `target` directory.
 
 

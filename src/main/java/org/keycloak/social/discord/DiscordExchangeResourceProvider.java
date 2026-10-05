@@ -25,7 +25,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 import org.keycloak.broker.provider.BrokeredIdentityContext;
-import org.keycloak.broker.provider.util.SimpleHttp;
+import org.keycloak.http.simple.SimpleHttp;
+import org.keycloak.http.simple.SimpleHttpRequest;
+import org.keycloak.http.simple.SimpleHttpResponse;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventType;
 import org.keycloak.models.AuthenticatedClientSessionModel;
@@ -127,7 +129,7 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
 
         RealmModel realm = session.getContext().getRealm();
 
-        IdentityProviderModel idpModel = realm.getIdentityProviderByAlias(identityProviderAlias);
+        IdentityProviderModel idpModel = session.identityProviders().getByAlias(identityProviderAlias);
         if (idpModel == null || !"discord".equals(idpModel.getProviderId())) {
             return errorResponse(Response.Status.BAD_REQUEST, "invalid_request",
                     "No discord identity provider configured with alias '" + identityProviderAlias + "'.");
@@ -150,7 +152,7 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
         DiscordIdentityProvider provider = new DiscordIdentityProvider(session, idpConfig);
 
         String tokenResponse;
-        try (SimpleHttp.Response discordResponse = buildTokenRequest(idpConfig, req.code).asResponse()) {
+        try (SimpleHttpResponse discordResponse = buildTokenRequest(idpConfig, req.code).asResponse()) {
             int status = discordResponse.getStatus();
             tokenResponse = discordResponse.asString();
             if (status < 200 || status >= 300) {
@@ -209,8 +211,11 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
         event.event(EventType.LOGIN);
         event.client(client);
 
+        // Explicitly PERSISTENT: a token pair is only refreshable if its session is stored, and the
+        // 8-argument overload this replaces (deprecated for removal) left that to its default.
         UserSessionModel userSession = session.sessions().createUserSession(
-                realm, user, user.getUsername(), clientIp, "discord-exchange", false, null, discordUserId);
+                null, realm, user, user.getUsername(), clientIp, "discord-exchange", false, null, discordUserId,
+                UserSessionModel.SessionPersistenceState.PERSISTENT);
         AuthenticatedClientSessionModel clientSession = session.sessions().createClientSession(realm, client, userSession);
         clientSession.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
         clientSession.setNote(org.keycloak.OAuth2Constants.SCOPE, "openid");
@@ -252,8 +257,8 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
      * {@code redirect_uri} parameter at all for this flow), and would fail
      * with {@code redirect_uri_mismatch}.
      */
-    private SimpleHttp buildTokenRequest(DiscordIdentityProviderConfig idpConfig, String code) {
-        return SimpleHttp.doPost(DiscordIdentityProvider.TOKEN_URL, session)
+    private SimpleHttpRequest buildTokenRequest(DiscordIdentityProviderConfig idpConfig, String code) {
+        return SimpleHttp.create(session).doPost(DiscordIdentityProvider.TOKEN_URL)
                 .param("client_id", idpConfig.getClientId())
                 .param("client_secret", idpConfig.getClientSecret())
                 .param("grant_type", "authorization_code")
