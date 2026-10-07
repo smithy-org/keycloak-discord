@@ -7,11 +7,13 @@
 
     <groupId>org.keycloak.extensions</groupId>
     <artifactId>keycloak-discord</artifactId>
-    <version>0.6.2-SNAPSHOT</version>
+    <version>0.7.0</version>
     <packaging>jar</packaging>
 
     <properties>
         <version.keycloak>26.7.5</version.keycloak>
+        <version.junit>5.11.4</version.junit>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
     <dependencies>
@@ -39,6 +41,12 @@
             <scope>provided</scope>
             <version>${version.keycloak}</version>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${version.junit}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -51,6 +59,11 @@
                     <source>17</source>
                     <target>17</target>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
             </plugin>
             <plugin>
                 <artifactId>maven-deploy-plugin</artifactId>
