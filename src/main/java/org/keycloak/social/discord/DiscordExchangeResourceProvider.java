@@ -333,9 +333,12 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
      * {@code redirect_uri} parameter at all for this flow), and would fail
      * with {@code redirect_uri_mismatch}. A PKCE {@code code_verifier} is
      * forwarded when the caller sent one with its {@code code_challenge}.
+     * The endpoint itself comes from the provider's configured API base URL,
+     * so a development realm pointed at a local Discord stand-in exercises
+     * this exchange end to end instead of only ever running in production.
      */
     private SimpleHttpRequest buildTokenRequest(DiscordIdentityProviderConfig idpConfig, String code, String codeVerifier) {
-        SimpleHttpRequest request = SimpleHttp.create(session).doPost(DiscordIdentityProvider.TOKEN_URL)
+        SimpleHttpRequest request = SimpleHttp.create(session).doPost(idpConfig.discordTokenUrl())
                 .param("client_id", idpConfig.getClientId())
                 .param("client_secret", idpConfig.getClientSecret())
                 .param("grant_type", "authorization_code")

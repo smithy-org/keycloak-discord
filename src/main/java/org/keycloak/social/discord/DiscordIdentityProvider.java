@@ -41,18 +41,21 @@ public class DiscordIdentityProvider extends AbstractOAuth2IdentityProvider<Disc
 
     private static final Logger log = Logger.getLogger(DiscordIdentityProvider.class);
 
+    /**
+     * The browser redirect to Discord's consent page. Always the real
+     * Discord: unlike the API URLs, which come from
+     * {@link DiscordIdentityProviderConfig#getApiBaseUrl()} so a development
+     * realm can use a local stand-in, there is nothing to stand in for here.
+     */
     public static final String AUTH_URL = "https://discord.com/oauth2/authorize";
-    public static final String TOKEN_URL = "https://discord.com/api/oauth2/token";
-    public static final String PROFILE_URL = "https://discord.com/api/users/@me";
-    public static final String GROUP_URL = "https://discord.com/api/users/@me/guilds";
     public static final String DEFAULT_SCOPE = "identify email";
     public static final String GUILDS_SCOPE = "guilds";
 
     public DiscordIdentityProvider(KeycloakSession session, DiscordIdentityProviderConfig config) {
         super(session, config);
         config.setAuthorizationUrl(AUTH_URL);
-        config.setTokenUrl(TOKEN_URL);
-        config.setUserInfoUrl(PROFILE_URL);
+        config.setTokenUrl(config.discordTokenUrl());
+        config.setUserInfoUrl(config.discordProfileUrl());
     }
 
     @Override
@@ -62,7 +65,7 @@ public class DiscordIdentityProvider extends AbstractOAuth2IdentityProvider<Disc
 
     @Override
     protected String getProfileEndpointForValidation(EventBuilder event) {
-        return PROFILE_URL;
+        return getConfig().discordProfileUrl();
     }
 
     @Override
@@ -90,7 +93,7 @@ public class DiscordIdentityProvider extends AbstractOAuth2IdentityProvider<Disc
         log.debug("doGetFederatedIdentity()");
         JsonNode profile = null;
         try {
-            profile = SimpleHttp.create(session).doGet(PROFILE_URL).header("Authorization", "Bearer " + accessToken).asJson();
+            profile = SimpleHttp.create(session).doGet(getConfig().discordProfileUrl()).header("Authorization", "Bearer " + accessToken).asJson();
         } catch (Exception e) {
             throw new IdentityBrokerException("Could not obtain user profile from discord.", e);
         }
@@ -105,7 +108,7 @@ public class DiscordIdentityProvider extends AbstractOAuth2IdentityProvider<Disc
 
     protected boolean isAllowedGuild(String accessToken) {
         try {
-            JsonNode guilds = SimpleHttp.create(session).doGet(GROUP_URL).header("Authorization", "Bearer " + accessToken).asJson();
+            JsonNode guilds = SimpleHttp.create(session).doGet(getConfig().discordGuildsUrl()).header("Authorization", "Bearer " + accessToken).asJson();
             Set<String> allowedGuilds = getConfig().getAllowedGuildsAsSet();
             for (JsonNode guild : guilds) {
                 String guildId = getJsonProperty(guild, "id");

@@ -9,6 +9,7 @@ This fork's releases start here; built against Keycloak 26.7.5 (needs 26.4 or ne
 * every exchange and refusal is a Keycloak `LOGIN` / `LOGIN_ERROR` event with the broker's details (`identity_provider`, `identity_provider_identity`, `identity_provider_user_id`, `username`, `reason`); the user session carries the broker's `identity_provider` notes
 * optional PKCE `codeVerifier`, forwarded to Discord as `code_verifier`
 * `discord_id` user attribute set on every exchange; exchange users are named after their Discord handle
+* `apiBaseUrl` identity-provider property (default `https://discord.com/api`): the token exchange, profile and guild requests -- the exchange endpoint's included -- are resolved against it, so a development realm can point them at a local stand-in for Discord; the browser authorization URL stays Discord's. The `TOKEN_URL`, `PROFILE_URL` and `GROUP_URL` constants on `DiscordIdentityProvider` are gone in favour of `DiscordIdentityProviderConfig.discordTokenUrl()` / `discordProfileUrl()` / `discordGuildsUrl()`
 
 ### Hardening
 
