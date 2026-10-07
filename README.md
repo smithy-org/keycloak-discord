@@ -5,12 +5,14 @@ Keycloak Social Login extension for Discord.
 
 ## Compatibility
 
-This fork is built from source and tracks the Keycloak release it is deployed on. It has no
-published releases: the upstream project's jars do not contain the token-exchange endpoint below.
+This fork is built from source and tracks the Keycloak release it is deployed on. Releases are
+tags cut by hand (`v0.7.0` is the first) and recorded in `CHANGELOG.md`; nothing is published to
+a Maven repository, and the upstream project's jars do not contain the token-exchange endpoint
+below. The Smithy Keycloak image builds the jar from a pinned commit of this repository.
 
 | Fork | Built against | JDK | Status |
 |---|---|---|---|
-| `master` (v0.7.0 and later) | Keycloak 26.7.5 | 21 | Current. Uses `org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()` and the 10-argument `createUserSession`, so it needs **Keycloak 26.4 or newer**. |
+| `233abc5` and later (`v0.7.0` tags the first release) | Keycloak 26.7.5 | targets 17; the Smithy image compiles on Temurin 21 | Current. Uses `org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()` and the 10-argument `createUserSession`, so it needs **Keycloak 26.4 or newer**. |
 | Up to `c25d602` | Keycloak 26.0.8 | 17 | Compiles unchanged against 26.7.5, but uses APIs Keycloak has deprecated (one for removal). Needed only for Keycloak older than 26.4. |
 
 The provider compiles against Keycloak's SPI, so build it against the exact Keycloak version that
@@ -44,8 +46,10 @@ Note: You don't need to setup the theme in `master` realm from v0.3.0.
 
 ## Source Build
 
-Clone this repository and run `mvn package` (JDK 21), adding `-Dversion.keycloak=<version>` to
-target a Keycloak release other than the one in `pom.xml`.
+Clone this repository and run `mvn package` (JDK 17 or newer), adding `-Dversion.keycloak=<version>`
+to target a Keycloak release other than the one in `pom.xml`. The only CI is
+`.github/workflows/pull_request.yml`, which builds each pull request against the pom's Keycloak
+version; there is no release automation.
 You can see `keycloak-discord-<version>.jar` under `target` directory.
 
 

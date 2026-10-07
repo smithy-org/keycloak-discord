@@ -17,6 +17,10 @@ This fork's releases start here; built against Keycloak 26.7.5 (needs 26.4 or ne
 * the per-address rate limit sweeps stale windows
 * Keycloak 26.4+ APIs (`org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()`, the 10-argument `createUserSession`)
 
+### Build
+
+* upstream's semantic-release workflow (`release.yml`, `.releaserc`) removed: releases are tagged by hand and this file is written by hand; `pull_request.yml` is the only CI
+
 ## [0.6.1](https://github.com/wadahiro/keycloak-discord/compare/v0.6.0...v0.6.1) (2024-11-02)
 
 
