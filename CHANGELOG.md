@@ -1,5 +1,9 @@
 ## Unreleased
 
+### Features
+
+* every exchange refreshes the user from the Discord profile, which the broker's `syncMode` would do for a browser login but never applied to this endpoint: the federated identity's username follows the handle; the `discord_username`, `discord_global_name` and `discord_avatar` user attributes follow the profile (the last two removed when Discord reports none; `discord_id` is filled in once and never changed); and the Keycloak username is renamed to a changed handle when no other user in the realm holds it, a clash keeping the old name and logging at INFO. Only what differs is written, so an unchanged profile costs no write. The `LOGIN` event gains `profile_refreshed` and `username_renamed`. The `discord_<snowflake>` placeholder self-heal is now one case of the general rename
+
 ### Hardening
 
 * `maxSessionsPerUser` exchange setting (`KC_SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_MAX_SESSIONS_PER_USER`; default `3`, `0` disables): after each exchange the user's oldest sessions in the realm are removed until the cap holds, never the one just created, so a client that re-runs the exchange whenever its refresh token is refused cannot pile up sessions that each live out the realm's SSO maximum. Deliberately not "revoke all other sessions", which would log a user with the app open on two devices out of each one in turn
