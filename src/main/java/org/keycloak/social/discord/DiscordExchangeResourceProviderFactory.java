@@ -35,24 +35,39 @@ import org.keycloak.services.resource.RealmResourceProviderFactory;
  * standard Keycloak SPI config (e.g.
  * {@code SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_IDENTITY_PROVIDER_ALIAS}),
  * not hardcoded, so this stays usable by any deployment. A caller may still
- * override either per request.
+ * override either per request. {@code maxSessionsPerUser} (same scope, e.g.
+ * {@code ..._MAX_SESSIONS_PER_USER}; default {@value #DEFAULT_MAX_SESSIONS_PER_USER},
+ * {@code 0} disables) bounds how many sessions one user accumulates through
+ * the endpoint.
  */
 public class DiscordExchangeResourceProviderFactory implements RealmResourceProviderFactory {
 
     public static final String ID = "discord-exchange";
+    /** Sessions one user may hold in the realm after an exchange before the oldest are removed. */
+    static final int DEFAULT_MAX_SESSIONS_PER_USER = 3;
 
     private String defaultIdentityProviderAlias;
     private String defaultClientId;
+    private int maxSessionsPerUser = DEFAULT_MAX_SESSIONS_PER_USER;
 
     @Override
     public RealmResourceProvider create(KeycloakSession session) {
-        return new DiscordExchangeResourceProvider(session, defaultIdentityProviderAlias, defaultClientId);
+        return new DiscordExchangeResourceProvider(session, defaultIdentityProviderAlias, defaultClientId, maxSessionsPerUser);
     }
 
     @Override
     public void init(Config.Scope config) {
         this.defaultIdentityProviderAlias = config.get("identityProviderAlias");
         this.defaultClientId = config.get("clientId");
+        this.maxSessionsPerUser = sessionCap(config.getInt("maxSessionsPerUser", DEFAULT_MAX_SESSIONS_PER_USER));
+    }
+
+    /** Unset means the default; zero or anything negative disables the cap. */
+    static int sessionCap(Integer configured) {
+        if (configured == null) {
+            return DEFAULT_MAX_SESSIONS_PER_USER;
+        }
+        return Math.max(0, configured);
     }
 
     @Override
