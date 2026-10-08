@@ -58,6 +58,15 @@ public class DiscordIdentityProviderFactory extends AbstractIdentityProviderFact
                 .label("Guild Id(s) to allow federation")
                 .helpText("If you want to allow federation for specific guild, enter the guild id. Please use a comma as a separator for multiple guilds.")
                 .add()
+                .property()
+                .name(DiscordIdentityProviderConfig.API_BASE_URL)
+                .type(ProviderConfigProperty.STRING_TYPE)
+                .label("Discord API base URL")
+                .helpText("Where the token exchange, profile and guild requests are sent (<base>/oauth2/token, <base>/users/@me, <base>/users/@me/guilds)."
+                        + " For pointing a development realm at a local stand-in for Discord; production leaves it empty, which means the real Discord API, "
+                        + DiscordIdentityProviderConfig.DEFAULT_API_BASE_URL + ". The browser authorization URL is not affected.")
+                .defaultValue(DiscordIdentityProviderConfig.DEFAULT_API_BASE_URL)
+                .add()
                 .build();
     }
 

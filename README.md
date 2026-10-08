@@ -42,6 +42,34 @@ Note: You don't need to setup the theme in `master` realm from v0.3.0.
 1. Add `discord` Identity Provider in the realm which you want to configure.
 2. In the `discord` identity provider page, set `Client Id` and `Client Secret`.
 3. (Optional) Set Guild Id(s) to allow federation if you want.
+4. Leave `Discord API base URL` (config key `apiBaseUrl`) empty or at its default,
+   `https://discord.com/api`, in production. It is where the provider sends its server-to-server
+   calls -- the code-for-token exchange (`<base>/oauth2/token`), the profile lookup
+   (`<base>/users/@me`) and the guild list (`<base>/users/@me/guilds`) -- and exists so a
+   development realm can point them at a local stand-in for Discord (see
+   [Development against a stub](#development-against-a-stub)). The browser redirect to Discord's
+   consent page always goes to the real Discord. A trailing slash is ignored.
+
+### Development against a stub
+
+The exchange endpoint below and the profile/guild lookups can only ever be exercised against a
+Discord application in production unless something answers in Discord's place. Set `apiBaseUrl`
+on a development realm's `discord` identity provider to a service that serves Discord's shapes
+for `/api/oauth2/token`, `/api/users/@me` and `/api/users/@me/guilds` for a seeded set of users
+(the Smithy app repository ships such a stub for its dev stack):
+
+```sh
+kcadm.sh update identity-provider/instances/discord -r <realm> \
+  -s config.apiBaseUrl=http://discord-stub:8092/api
+```
+
+Every Discord API call this provider makes then goes to the stub, including the token exchange
+that `POST /realms/{realm}/discord-exchange/token` performs, so the whole embedded-app login can
+run on a laptop with no Discord credentials. Unset the property (or set it back to
+`https://discord.com/api`) to talk to Discord again. Whoever can edit the identity provider can
+redirect its client secret with this setting, exactly as they can with the token URL of
+Keycloak's generic OpenID Connect provider -- it is a realm-administrator control, not a
+user-facing one.
 
 
 ## Source Build
