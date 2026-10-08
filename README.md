@@ -5,12 +5,14 @@ Keycloak Social Login extension for Discord.
 
 ## Compatibility
 
-This fork is built from source and tracks the Keycloak release it is deployed on. It has no
-published releases: the upstream project's jars do not contain the token-exchange endpoint below.
+This fork is built from source and tracks the Keycloak release it is deployed on. Releases are
+tags cut by hand (`v0.7.0` is the first) and recorded in `CHANGELOG.md`; nothing is published to
+a Maven repository, and the upstream project's jars do not contain the token-exchange endpoint
+below. The Smithy Keycloak image builds the jar from a pinned commit of this repository.
 
 | Fork | Built against | JDK | Status |
 |---|---|---|---|
-| `master` (from the "Build against Keycloak 26.7.5" change) | Keycloak 26.7.5 | 21 | Current. Uses `org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()` and the 10-argument `createUserSession`, so it needs **Keycloak 26.4 or newer**. |
+| `233abc5` and later (`v0.7.0` tags the first release) | Keycloak 26.7.5 | targets 17; the Smithy image compiles on Temurin 21 | Current. Uses `org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()` and the 10-argument `createUserSession`, so it needs **Keycloak 26.4 or newer**. |
 | Up to `c25d602` | Keycloak 26.0.8 | 17 | Compiles unchanged against 26.7.5, but uses APIs Keycloak has deprecated (one for removal). Needed only for Keycloak older than 26.4. |
 
 The provider compiles against Keycloak's SPI, so build it against the exact Keycloak version that
@@ -44,8 +46,10 @@ Note: You don't need to setup the theme in `master` realm from v0.3.0.
 
 ## Source Build
 
-Clone this repository and run `mvn package` (JDK 21), adding `-Dversion.keycloak=<version>` to
-target a Keycloak release other than the one in `pom.xml`.
+Clone this repository and run `mvn package` (JDK 17 or newer), adding `-Dversion.keycloak=<version>`
+to target a Keycloak release other than the one in `pom.xml`. The only CI is
+`.github/workflows/pull_request.yml`, which builds each pull request against the pom's Keycloak
+version; there is no release automation.
 You can see `keycloak-discord-<version>.jar` under `target` directory.
 
 
@@ -74,32 +78,44 @@ Content-Type: application/json
 
 {
   "code": "<authorization code from your embedded SDK's authorize call>",
+  "codeVerifier": "<optional PKCE verifier for the code_challenge you sent authorize()>",
   "identityProviderAlias": "discord",
   "clientId": "your-public-client-id"
 }
 ```
 
-`identityProviderAlias` and `clientId` fall back to this provider's own
-configured defaults if omitted (`identityProviderAlias` /
-`clientId` config, e.g. via
+`identityProviderAlias` and `clientId` are normally configured on the
+provider itself (`identityProviderAlias` / `clientId` config, e.g. via
 `KC_SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_IDENTITY_PROVIDER_ALIAS` /
 `KC_SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_CLIENT_ID` environment
 variables, or the equivalent `spi-realm-restapi-extension-discord-exchange-*`
-Keycloak config options) -- set one or both if every caller in your
-deployment always targets the same identity provider/client, so callers only
-need to send `code`.
+Keycloak config options), and callers then send only `code`. **A configured
+default is authoritative**: a request that names a different client or
+provider is refused with `invalid_request`, so the endpoint can never be
+pointed at another public client in the realm. The request fields are only
+honoured for a deployment that configures no default.
+
+`codeVerifier` is forwarded to Discord as `code_verifier` when present
+(43-128 characters, RFC 7636). Whether Discord's token endpoint honours PKCE
+for the Embedded App SDK flow is not documented by Discord; send it only once
+you have confirmed that against a real code.
 
 The named client **must be a public client** (no client secret) -- this
 endpoint is purpose-built for embedded-app clients, which can never hold a
 secret, not a general "mint a token for any client" exchange.
 
-**Response:**
+**Response:** Keycloak's standard token response, plus one field.
 
 ```json
 {
   "access_token": "...",
+  "expires_in": 300,
   "refresh_token": "...",
-  "expires_in": 900,
+  "refresh_expires_in": 3600,
+  "token_type": "Bearer",
+  "session_state": "...",
+  "scope": "openid profile email",
+  "not-before-policy": 0,
   "discord_access_token": "..."
 }
 ```
@@ -108,7 +124,27 @@ secret, not a general "mint a token for any client" exchange.
 Discord's own Embedded App SDK expects it for a following
 `discordSdk.commands.authenticate({ access_token })` call, if your app uses
 any Discord SDK commands that require the session to be marked
-authenticated.
+authenticated. `refresh_expires_in` tells the client how long its refresh
+token lives, so it can tell a dead token from a Keycloak that is merely
+unreachable.
+
+**Errors** are the fixed OAuth shapes `{"error", "error_description"}`:
+`invalid_request` (400) for a bad request or a mismatched client/provider,
+`invalid_grant` (400) when Discord rejects the code or the account is
+disabled, `server_error` (502) when Discord cannot be reached, and
+`rate_limited` (429) past 10 exchanges per minute per source address (the
+realm must trust the proxy headers for that address to be the real client).
+
+**Events.** Every exchange is recorded as a Keycloak `LOGIN` event with
+`auth_method=discord-exchange`, the client, user, session,
+`identity_provider`, `identity_provider_identity` (the Discord handle) and
+`identity_provider_user_id` (the snowflake); every refusal is a
+`LOGIN_ERROR` with the standard Keycloak error code and a `reason` detail
+(`rate_limited`, `discord_status_401`, `confidential_client`, ...). The
+default `jboss-logging` listener prints the errors at WARN whether or not the
+realm stores events, so a failing exchange is visible in Keycloak's log. The
+user session carries the same `identity_provider` /
+`identity_provider_identity` notes a browser broker login would.
 
 The user's Discord snowflake ID is also stored as a plain user attribute,
 `discord_id`, on every exchange (not just first creation). Keycloak has no
