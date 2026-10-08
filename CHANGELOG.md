@@ -1,3 +1,13 @@
+## Unreleased
+
+### Hardening
+
+* `maxSessionsPerUser` exchange setting (`KC_SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_MAX_SESSIONS_PER_USER`; default `3`, `0` disables): after each exchange the user's oldest sessions in the realm are removed until the cap holds, never the one just created, so a client that re-runs the exchange whenever its refresh token is refused cannot pile up sessions that each live out the realm's SSO maximum. Deliberately not "revoke all other sessions", which would log a user with the app open on two devices out of each one in turn
+
+### Build
+
+* `pull_request.yml` builds with `mvn -B -C` (`--strict-checksums`): a dependency whose checksum does not match the repository's fails the build instead of warning
+
 # [0.7.0](https://github.com/smithy-org/keycloak-discord/compare/v0.6.1...v0.7.0) (2026-10-07)
 
 This fork's releases start here; built against Keycloak 26.7.5 (needs 26.4 or newer).

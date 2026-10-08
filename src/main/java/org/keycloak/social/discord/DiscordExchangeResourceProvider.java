@@ -47,7 +47,11 @@ import org.keycloak.services.Urls;
 import org.keycloak.services.resource.RealmResourceProvider;
 import org.keycloak.services.util.DefaultClientSessionContext;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -106,11 +110,15 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
     private final KeycloakSession session;
     private final String defaultIdentityProviderAlias;
     private final String defaultClientId;
+    /** Sessions one user may hold in the realm after an exchange; 0 disables the cap. */
+    private final int maxSessionsPerUser;
 
-    public DiscordExchangeResourceProvider(KeycloakSession session, String defaultIdentityProviderAlias, String defaultClientId) {
+    public DiscordExchangeResourceProvider(KeycloakSession session, String defaultIdentityProviderAlias, String defaultClientId,
+                                           int maxSessionsPerUser) {
         this.session = session;
         this.defaultIdentityProviderAlias = defaultIdentityProviderAlias;
         this.defaultClientId = defaultClientId;
+        this.maxSessionsPerUser = maxSessionsPerUser;
     }
 
     @Override
@@ -290,6 +298,7 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
             userSession.setNote(Details.IDENTITY_PROVIDER_USERNAME, identity.getUsername());
         }
         event.session(userSession);
+        capUserSessions(realm, user, userSession);
 
         AuthenticatedClientSessionModel clientSession = session.sessions().createClientSession(realm, client, userSession);
         clientSession.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
@@ -408,6 +417,73 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
         }
         log.infof("discord-exchange: renaming placeholder user '%s' to Discord handle '%s'", user.getUsername(), discordUsername);
         user.setUsername(discordUsername);
+    }
+
+    /**
+     * Keeps one user's session count bounded. Every exchange has to mint a
+     * fresh session (a token pair is only refreshable while its session is
+     * stored), the client re-runs the exchange whenever its refresh token is
+     * refused, and each session then lives out the realm's SSO maximum -- so
+     * without a cap one player piles up sessions without limit. Revoking
+     * "all other sessions" instead would be wrong: a player with the app
+     * open on two devices, both refreshing, would log each other out on
+     * every refresh. So only the oldest sessions past the cap go, and never
+     * the one just minted. By the time this runs the token is already
+     * issued; a failure here is logged rather than surfaced, because sprawl
+     * is a hygiene matter and the exchange itself succeeded.
+     */
+    private void capUserSessions(RealmModel realm, UserModel user, UserSessionModel justCreated) {
+        if (maxSessionsPerUser <= 0) {
+            return;
+        }
+        try {
+            Map<String, UserSessionModel> others = new HashMap<>();
+            List<SessionStamp> stamps = new ArrayList<>();
+            session.sessions().getUserSessionsStream(realm, user).forEach(existing -> {
+                if (!justCreated.getId().equals(existing.getId())) {
+                    others.put(existing.getId(), existing);
+                    stamps.add(new SessionStamp(existing.getId(), existing.getStarted()));
+                }
+            });
+            // getStarted() is whole seconds, so a retry within the same second
+            // ties with the session it replaces: pin the new session to the
+            // newest slot so it is never among the oldest, whatever the clock
+            // says and whether or not the stream already shows it.
+            stamps.add(new SessionStamp(justCreated.getId(), Integer.MAX_VALUE));
+            int removed = 0;
+            for (String id : oldestBeyondCap(stamps, maxSessionsPerUser)) {
+                UserSessionModel doomed = others.get(id);
+                if (doomed != null) {
+                    session.sessions().removeUserSession(realm, doomed);
+                    removed++;
+                }
+            }
+            if (removed > 0) {
+                log.infof("discord-exchange: removed %d oldest session(s) of user %s to stay within the cap of %d",
+                        removed, user.getId(), maxSessionsPerUser);
+            }
+        } catch (Exception e) {
+            log.warnf(e, "discord-exchange: could not cap the sessions of user %s; the exchange itself succeeded", user.getId());
+        }
+    }
+
+    /**
+     * Which of {@code sessions} to remove so that at most {@code cap} remain:
+     * sorted oldest first (ties broken by id, so the answer is stable),
+     * everything before the newest {@code cap}. A cap of zero or less
+     * disables the limit and removes nothing.
+     */
+    static List<String> oldestBeyondCap(List<SessionStamp> sessions, int cap) {
+        if (cap <= 0 || sessions.size() <= cap) {
+            return List.of();
+        }
+        List<SessionStamp> oldestFirst = new ArrayList<>(sessions);
+        oldestFirst.sort(Comparator.comparingInt(SessionStamp::started).thenComparing(SessionStamp::id));
+        return oldestFirst.subList(0, oldestFirst.size() - cap).stream().map(SessionStamp::id).toList();
+    }
+
+    /** A user session reduced to what the cap needs: its id and {@link UserSessionModel#getStarted()}. */
+    record SessionStamp(String id, int started) {
     }
 
     /**

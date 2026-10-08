@@ -21,5 +21,7 @@ jobs:
           cache: 'maven'
 
       - name: Build with Maven
-        run: mvn -B package
+        # -C (--strict-checksums): a dependency whose checksum does not match
+        # the repository's fails the build instead of warning.
+        run: mvn -B -C package
 

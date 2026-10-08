@@ -123,6 +123,21 @@ provider is refused with `invalid_request`, so the endpoint can never be
 pointed at another public client in the realm. The request fields are only
 honoured for a deployment that configures no default.
 
+`maxSessionsPerUser` (config key `maxSessionsPerUser`, i.e.
+`KC_SPI_REALM_RESTAPI_EXTENSION_DISCORD_EXCHANGE_MAX_SESSIONS_PER_USER` or
+`spi-realm-restapi-extension-discord-exchange-max-sessions-per-user`;
+default `3`) caps how many Keycloak user sessions one user accumulates
+through this endpoint. Every exchange creates a new session -- it has to, a
+token pair is only refreshable while its session is stored -- and an
+embedded app re-runs the exchange whenever its refresh token is refused, so
+without a cap one user piles up sessions that each live out the realm's SSO
+maximum. Once the new session exists, the user's oldest sessions in the
+realm (by start time) are removed until only `maxSessionsPerUser` remain.
+The session just created is never removed, and neither is "every other
+session": that would log a user with the app open on two devices out of
+each one in turn on every refresh. Set it to `0` to disable the cap. A
+failure while trimming is logged at WARN and does not fail the exchange.
+
 `codeVerifier` is forwarded to Discord as `code_verifier` when present
 (43-128 characters, RFC 7636). Whether Discord's token endpoint honours PKCE
 for the Embedded App SDK flow is not documented by Discord; send it only once
