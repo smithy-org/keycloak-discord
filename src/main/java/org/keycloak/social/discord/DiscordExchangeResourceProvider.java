@@ -15,6 +15,7 @@
 package org.keycloak.social.discord;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
@@ -23,6 +24,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
+import org.keycloak.broker.oidc.mappers.AbstractJsonUserAttributeMapper;
 import org.keycloak.broker.provider.BrokeredIdentityContext;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
@@ -51,10 +53,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 
 /**
  * {@code POST /realms/{realm}/discord-exchange/token}.
@@ -76,7 +81,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Every outcome is recorded as a Keycloak {@code LOGIN} / {@code LOGIN_ERROR}
  * event with the same details the broker flow records, so a deployment's
  * event listeners (the default {@code jboss-logging} one logs errors at WARN)
- * see this endpoint exactly as they see a browser login.
+ * see this endpoint exactly as they see a browser login. Every successful
+ * exchange also refreshes the user from the Discord profile
+ * ({@link #refreshProfile}), which the broker's sync mode would do for a
+ * browser login but cannot do here.
  */
 public class DiscordExchangeResourceProvider implements RealmResourceProvider {
 
@@ -84,6 +92,18 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
 
     /** Value of the {@code auth_method} event detail and the user session's auth method. */
     static final String AUTH_METHOD = "discord-exchange";
+
+    /** User attributes mirrored from the Discord profile; see {@link #refreshProfile}. */
+    static final String ATTR_DISCORD_ID = "discord_id";
+    static final String ATTR_DISCORD_USERNAME = "discord_username";
+    static final String ATTR_DISCORD_GLOBAL_NAME = "discord_global_name";
+    static final String ATTR_DISCORD_AVATAR = "discord_avatar";
+    private static final List<String> PROFILE_ATTRIBUTES =
+            List.of(ATTR_DISCORD_ID, ATTR_DISCORD_USERNAME, ATTR_DISCORD_GLOBAL_NAME, ATTR_DISCORD_AVATAR);
+
+    /** {@code LOGIN} event details: whether the exchange wrote profile data, and whether it renamed the user. */
+    static final String DETAIL_PROFILE_REFRESHED = "profile_refreshed";
+    static final String DETAIL_USERNAME_RENAMED = "username_renamed";
 
     private static final int MAX_CODE_LENGTH = 512;
     /** RFC 7636 s4.1: a code verifier is 43 to 128 characters. */
@@ -279,6 +299,15 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
                     Response.Status.BAD_REQUEST, "invalid_grant", "Account disabled.");
         }
 
+        // The broker's sync mode never applies here (this endpoint bypasses
+        // the broker), so the refresh it would do is done by hand: the user
+        // follows the player's current Discord handle, display name and
+        // avatar instead of keeping the ones from first sight.
+        ProfileRefresh refresh = refreshProfile(realm, identityProviderAlias, user, discordUserId, DiscordProfile.from(identity));
+        event.detail(Details.USERNAME, user.getUsername())
+                .detail(DETAIL_PROFILE_REFRESHED, Boolean.toString(refresh.refreshesProfile()))
+                .detail(DETAIL_USERNAME_RENAMED, Boolean.toString(refresh.renameTo() != null));
+
         // Outside the normal request pipeline (AuthenticationProcessor,
         // TokenEndpoint), nothing else sets this -- but TokenManager's
         // protocol-mapper chain reads it (e.g. resolving client attributes
@@ -365,16 +394,7 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
             user = session.users().addUser(realm, preferredUsername(realm, discordUserId, discordUsername));
             user.setEnabled(true);
             session.users().addFederatedIdentity(realm, user, link);
-        } else {
-            selfHealPlaceholderUsername(realm, user, discordUserId, discordUsername);
         }
-        // Keycloak has no built-in mapper that reads a federated identity's
-        // external id directly into a token claim -- stored as a plain user
-        // attribute instead so deployments can expose it with the standard,
-        // built-in oidc-usermodel-attribute-mapper (no custom mapper code
-        // needed). Set on every exchange, not just creation, so it stays
-        // correct even for a user whose federated link predates this field.
-        user.setSingleAttribute("discord_id", discordUserId);
         return user;
     }
 
@@ -385,7 +405,8 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
      * snowflake-derived {@code discord_<id>} name survives only as the
      * fallback for a blank handle or a username collision (a different
      * account -- e.g. one created by the browser broker before this
-     * federated link existed -- already holding the name).
+     * federated link existed -- already holding the name); a later exchange
+     * renames the user once the handle is free ({@link #refreshProfile}).
      */
     private String preferredUsername(RealmModel realm, String discordUserId, String discordUsername) {
         if (isBlank(discordUsername)) {
@@ -399,24 +420,162 @@ public class DiscordExchangeResourceProvider implements RealmResourceProvider {
     }
 
     /**
-     * Users created by earlier versions of this endpoint were named
-     * {@code discord_<snowflake>} even though the real handle was already
-     * known -- rename them to the handle on their next exchange. Safe for
-     * every downstream consumer: tokens identify the account by {@code sub}
-     * (the Keycloak user id), which a username rename never changes.
+     * Mirrors the Discord profile onto the user, the way the broker would in
+     * {@code FORCE} sync mode if this endpoint went through it: the
+     * federated identity records the current handle; the
+     * {@value #ATTR_DISCORD_USERNAME}, {@value #ATTR_DISCORD_GLOBAL_NAME}
+     * and {@value #ATTR_DISCORD_AVATAR} attributes follow the profile (and
+     * go when Discord reports none); and the Keycloak username follows a
+     * changed handle whenever no other user in the realm holds the new
+     * name. Email, first and last name are never touched. A rename is safe
+     * for every downstream consumer: tokens identify the account by
+     * {@code sub} (the Keycloak user id), which a rename never changes.
+     * <p>
+     * {@value #ATTR_DISCORD_ID} is kept here too: Keycloak has no built-in
+     * mapper that reads a federated identity's external id directly into a
+     * token claim, so the snowflake is stored as a plain user attribute that
+     * deployments expose with the standard {@code
+     * oidc-usermodel-attribute-mapper}. It is filled in for a user whose
+     * federated link predates the attribute and never changes afterwards.
+     * <p>
+     * Everything is read before anything is written and only what differs is
+     * written, because every setter on the cached user model invalidates its
+     * cache entry: the usual exchange, with nothing changed, costs no write.
      */
-    private void selfHealPlaceholderUsername(RealmModel realm, UserModel user, String discordUserId, String discordUsername) {
-        if (isBlank(discordUsername)) {
-            return;
+    private ProfileRefresh refreshProfile(RealmModel realm, String identityProviderAlias, UserModel user,
+                                          String discordUserId, DiscordProfile profile) {
+        FederatedIdentityModel link = session.users().getFederatedIdentity(realm, user, identityProviderAlias);
+        Map<String, String> attributes = new HashMap<>();
+        for (String name : PROFILE_ATTRIBUTES) {
+            String value = user.getFirstAttribute(name);
+            if (value != null) {
+                attributes.put(name, value);
+            }
         }
-        if (!("discord_" + discordUserId).equals(user.getUsername())) {
-            return;
+        StoredProfile stored = new StoredProfile(user.getUsername(), link == null ? null : link.getUserName(), attributes);
+
+        ProfileRefresh refresh = planProfileRefresh(stored, discordUserId, profile, name -> usernameTakenByAnother(realm, user, name));
+
+        refresh.attributes().forEach((name, value) -> {
+            if (value == null) {
+                user.removeAttribute(name);
+            } else {
+                user.setSingleAttribute(name, value);
+            }
+        });
+        if (refresh.renameTo() != null) {
+            log.infof("discord-exchange: renaming user '%s' to its current Discord handle '%s'", user.getUsername(), refresh.renameTo());
+            user.setUsername(refresh.renameTo());
         }
-        if (session.users().getUserByUsername(realm, discordUsername) != null) {
-            return;
+        if (refresh.linkUserName() != null && link != null) {
+            session.users().updateFederatedIdentity(realm, user,
+                    new FederatedIdentityModel(identityProviderAlias, discordUserId, refresh.linkUserName(), link.getToken()));
         }
-        log.infof("discord-exchange: renaming placeholder user '%s' to Discord handle '%s'", user.getUsername(), discordUsername);
-        user.setUsername(discordUsername);
+        return refresh;
+    }
+
+    /** Keycloak looks usernames up case-insensitively, so the user's own (lower-cased) name is not a clash. */
+    private boolean usernameTakenByAnother(RealmModel realm, UserModel user, String username) {
+        UserModel other = session.users().getUserByUsername(realm, username);
+        return other != null && !other.getId().equals(user.getId());
+    }
+
+    /**
+     * Decides what {@link #refreshProfile} writes, given what the user holds
+     * ({@code stored}) and what Discord just said ({@code profile}): the
+     * attribute values that differ (a null value removes the attribute), the
+     * username to rename to, and the handle to record on the federated
+     * identity -- the last two null when nothing changed. The Keycloak
+     * username is compared ignoring case: Keycloak stores it in lower case,
+     * while {@link BrokeredIdentityContext#getUsername()} keeps the handle's
+     * own case when the provider's "case-sensitive original username"
+     * option is on. A clash with another user keeps the old username and is
+     * logged at INFO. A blank handle (Discord always sends one; this is belt
+     * and braces) leaves every username alone.
+     */
+    static ProfileRefresh planProfileRefresh(StoredProfile stored, String discordUserId, DiscordProfile profile,
+                                             Predicate<String> usernameTakenByAnother) {
+        Map<String, String> attributes = new LinkedHashMap<>();
+        String handle = isBlank(profile.username()) ? null : profile.username();
+        putIfChanged(attributes, stored, ATTR_DISCORD_ID, discordUserId);
+        if (handle != null) {
+            putIfChanged(attributes, stored, ATTR_DISCORD_USERNAME, handle);
+        }
+        putIfChanged(attributes, stored, ATTR_DISCORD_GLOBAL_NAME, profile.globalName());
+        putIfChanged(attributes, stored, ATTR_DISCORD_AVATAR, profile.avatar());
+
+        String renameTo = null;
+        String linkUserName = null;
+        if (handle != null) {
+            if (!handle.equals(stored.linkUserName())) {
+                linkUserName = handle;
+            }
+            if (!handle.equalsIgnoreCase(stored.username())) {
+                if (usernameTakenByAnother.test(handle)) {
+                    log.infof("discord-exchange: user '%s' is now '%s' on Discord, but another user in the realm holds that username; keeping '%s'",
+                            stored.username(), handle, stored.username());
+                } else {
+                    renameTo = handle;
+                }
+            }
+        }
+        return new ProfileRefresh(attributes, renameTo, linkUserName);
+    }
+
+    private static void putIfChanged(Map<String, String> changes, StoredProfile stored, String name, String value) {
+        if (!Objects.equals(stored.attributes().get(name), value)) {
+            changes.put(name, value);
+        }
+    }
+
+    /**
+     * The Discord profile fields an exchange mirrors onto the user: the
+     * handle as {@link DiscordIdentityProvider#extractIdentityFromProfile}
+     * builds it (with the legacy {@code #discriminator} when there is one),
+     * the display name and the avatar hash. The last two are null when
+     * Discord sends {@code null} for them.
+     */
+    record DiscordProfile(String username, String globalName, String avatar) {
+
+        /**
+         * The display name and avatar come from the raw {@code /users/@me}
+         * document {@link DiscordIdentityProvider} keeps on the context for
+         * Keycloak's attribute mappers.
+         */
+        static DiscordProfile from(BrokeredIdentityContext identity) {
+            JsonNode document = identity.getContextData().get(AbstractJsonUserAttributeMapper.CONTEXT_JSON_NODE) instanceof JsonNode node
+                    ? node : null;
+            return new DiscordProfile(identity.getUsername(), text(document, "global_name"), text(document, "avatar"));
+        }
+
+        private static String text(JsonNode document, String field) {
+            JsonNode value = document == null ? null : document.get(field);
+            if (value == null || value.isNull() || isBlank(value.asText())) {
+                return null;
+            }
+            return value.asText();
+        }
+    }
+
+    /**
+     * What the user holds before an exchange: the Keycloak username, the
+     * username on the Discord federated identity, and the present
+     * {@link #PROFILE_ATTRIBUTES} (absent ones are absent from the map).
+     */
+    record StoredProfile(String username, String linkUserName, Map<String, String> attributes) {
+    }
+
+    /**
+     * The writes one exchange makes: attribute values to set (a null value
+     * removes the attribute), the username to rename to and the handle to
+     * record on the federated identity, the last two null when unchanged.
+     */
+    record ProfileRefresh(Map<String, String> attributes, String renameTo, String linkUserName) {
+
+        /** Whether any profile data (attributes or the federated identity) was written. */
+        boolean refreshesProfile() {
+            return !attributes.isEmpty() || linkUserName != null;
+        }
     }
 
     /**

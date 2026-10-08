@@ -189,12 +189,35 @@ realm stores events, so a failing exchange is visible in Keycloak's log. The
 user session carries the same `identity_provider` /
 `identity_provider_identity` notes a browser broker login would.
 
-The user's Discord snowflake ID is also stored as a plain user attribute,
-`discord_id`, on every exchange (not just first creation). Keycloak has no
-built-in mapper that reads a federated identity's external id directly into
-a token claim, but a user attribute can be exposed as one with the standard,
-built-in `oidc-usermodel-attribute-mapper` protocol mapper -- no custom
-mapper code needed on your end.
+**What each exchange refreshes.** The endpoint bypasses Keycloak's broker,
+so the identity provider's *sync mode* has no effect on it; the exchange
+does the refresh itself. A user is created on first sight, named after the
+Discord handle (falling back to `discord_<snowflake>` when the handle is
+blank or another user already holds it). After that, every exchange
+compares the Discord profile with what Keycloak holds and writes only what
+differs, so an unchanged profile costs no write:
+
+* the federated identity's username is set to the current handle;
+* the user attributes `discord_id` (the snowflake, filled in once and never
+  changed), `discord_username` (the handle), `discord_global_name` (the
+  display name) and `discord_avatar` (the avatar hash) follow the profile;
+  the last two are removed when Discord reports none;
+* the Keycloak username is renamed to a changed handle when no other user
+  in the realm holds the new name -- a `discord_<snowflake>` placeholder is
+  renamed the same way once its handle is free. A clash keeps the old
+  username and is logged at INFO with both names. A rename is safe for every
+  consumer: tokens identify the account by `sub`, the Keycloak user id.
+
+Email, first and last name are never touched. The `LOGIN` event records
+`profile_refreshed` and `username_renamed` (`true`/`false`). The attributes
+are written straight to the user model, so they need no user-profile
+declaration to be stored or to be exposed as token claims with the
+standard, built-in `oidc-usermodel-attribute-mapper` protocol mapper (no
+custom mapper code needed on your end; Keycloak has no built-in mapper that
+reads a federated identity's external id into a claim, which is why
+`discord_id` exists). Declare them in the realm's user profile, with view
+and edit permitted to admins only, if you want them shown in the admin
+console; a user must never be able to edit them from the account console.
 
 
 ## Licence
