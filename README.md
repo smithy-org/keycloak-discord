@@ -12,7 +12,8 @@ below. The Smithy Keycloak image builds the jar from a pinned commit of this rep
 
 | Fork | Built against | JDK | Status |
 |---|---|---|---|
-| `233abc5` and later (`v0.7.0` tags the first release) | Keycloak 26.7.5 | targets 17; the Smithy image compiles on Temurin 21 | Current. Uses `org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()` and the 10-argument `createUserSession`, so it needs **Keycloak 26.4 or newer**. |
+| The change that sets `version.keycloak` to 26.8.0, and later | Keycloak 26.8.0 | targets 17; the Smithy image compiles on Temurin 21 | Current. Compiles unchanged against 26.8.0 with `-Dmaven.compiler.showDeprecation=true` and no deprecation warning (checked 2026-10-12). Still uses `org.keycloak.http.simple.SimpleHttp`, `session.identityProviders()` and the 10-argument `createUserSession`, so it needs **Keycloak 26.4 or newer**. |
+| `233abc5` up to `31f61a1` (`v0.7.0` tags the first release) | Keycloak 26.7.5 | targets 17; the Smithy image compiles on Temurin 21 | Previous. Same API requirements as the row above. |
 | Up to `c25d602` | Keycloak 26.0.8 | 17 | Compiles unchanged against 26.7.5, but uses APIs Keycloak has deprecated (one for removal). Needed only for Keycloak older than 26.4. |
 
 The provider compiles against Keycloak's SPI, so build it against the exact Keycloak version that
